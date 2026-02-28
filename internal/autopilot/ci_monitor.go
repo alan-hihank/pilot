@@ -127,6 +127,12 @@ func (m *CIMonitor) checkStatus(ctx context.Context, sha string) (CIStatus, erro
 	// Get check runs (GitHub Actions)
 	checkRuns, err := m.ghClient.ListCheckRuns(ctx, m.owner, m.repo, sha)
 	if err != nil {
+		// Fine-grained PATs don't support check-runs API (403).
+		// Fall back to combined commit status API which uses Commit statuses permission.
+		if strings.Contains(err.Error(), "403") || strings.Contains(err.Error(), "Resource not accessible") {
+			m.log.Info("check-runs API not accessible, falling back to commit status API", "sha", ShortSHA(sha))
+			return m.checkCommitStatus(ctx, sha)
+		}
 		return CIPending, err
 	}
 
@@ -177,6 +183,40 @@ func (m *CIMonitor) checkStatus(ctx context.Context, sha string) (CIStatus, erro
 
 	// Determine overall status
 	return m.aggregateStatus(requiredStatus), nil
+}
+
+// checkCommitStatus uses the combined commit status API as fallback when check-runs is unavailable.
+// This works with fine-grained PATs that have Commit statuses: Read permission.
+func (m *CIMonitor) checkCommitStatus(ctx context.Context, sha string) (CIStatus, error) {
+	combined, err := m.ghClient.GetCombinedStatus(ctx, m.owner, m.repo, sha)
+	if err != nil {
+		return CIPending, fmt.Errorf("failed to get combined status: %w", err)
+	}
+
+	m.log.Debug("combined commit status",
+		"sha", ShortSHA(sha),
+		"state", combined.State,
+		"total", combined.TotalCount,
+	)
+
+	// If no statuses reported, check if there are any checks at all
+	// Some repos only use check runs (GitHub Actions) which we can't access
+	if combined.TotalCount == 0 {
+		// No commit statuses — assume CI passed since we can't check
+		m.log.Info("no commit statuses found, assuming CI passed", "sha", ShortSHA(sha))
+		return CISuccess, nil
+	}
+
+	switch strings.ToLower(combined.State) {
+	case "success":
+		return CISuccess, nil
+	case "failure", "error":
+		return CIFailure, nil
+	case "pending":
+		return CIPending, nil
+	default:
+		return CIPending, nil
+	}
 }
 
 // checkAllRuns returns aggregate status when no required checks are configured.
