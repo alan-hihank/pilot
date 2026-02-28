@@ -149,6 +149,19 @@ type Config struct {
 	// Name is a user-friendly label for this environment (e.g. "staging", "production").
 	// When empty, defaults to the Environment value.
 	Name string `yaml:"name"`
+
+	// ReviewFixEnabled enables the automated review fix loop.
+	// When enabled, after CI passes, autopilot waits for bot review and fixes issues automatically.
+	ReviewFixEnabled bool `yaml:"review_fix_enabled"`
+	// ReviewBotLogin is the GitHub login of the review bot to monitor (e.g., "coderabbitai[bot]").
+	ReviewBotLogin string `yaml:"review_bot_login"`
+	// MaxReviewFixIterations limits how many review fix cycles before giving up.
+	// Default: 3. Set to 0 to disable the limit.
+	MaxReviewFixIterations int `yaml:"max_review_fix_iterations"`
+	// ReviewPollInterval is how often to check for bot review status.
+	ReviewPollInterval time.Duration `yaml:"review_poll_interval"`
+	// ReviewWaitTimeout is the maximum time to wait for a bot review before proceeding.
+	ReviewWaitTimeout time.Duration `yaml:"review_wait_timeout"`
 }
 
 // CIChecksConfig holds configuration for CI check monitoring.
@@ -297,8 +310,13 @@ func DefaultConfig() *Config {
 		MaxMergesPerHour:    10,
 		ApprovalTimeout:     1 * time.Hour,
 		Release:             nil, // Disabled by default
-		MergedPRScanWindow:  30 * time.Minute,
-		Environments:        defaultEnvironments(),
+		MergedPRScanWindow:         30 * time.Minute,
+		Environments:               defaultEnvironments(),
+		ReviewFixEnabled:           false,
+		ReviewBotLogin:             "coderabbitai[bot]",
+		MaxReviewFixIterations:     3,
+		ReviewPollInterval:         30 * time.Second,
+		ReviewWaitTimeout:          15 * time.Minute,
 	}
 }
 
@@ -355,6 +373,10 @@ const (
 	StagePostMergeCI PRStage = "post_merge_ci"
 	// StageReleasing indicates the PR is triggering an automatic release.
 	StageReleasing PRStage = "releasing"
+	// StageAwaitingReview indicates the PR is waiting for bot review (e.g., CodeRabbit).
+	StageAwaitingReview PRStage = "awaiting_review"
+	// StageFixingReview indicates the PR is being fixed based on bot review feedback.
+	StageFixingReview PRStage = "fixing_review"
 	// StageFailed indicates the PR pipeline has failed and requires intervention.
 	StageFailed PRStage = "failed"
 )
@@ -437,4 +459,8 @@ type PRState struct {
 	TargetBranch string
 	// IssueNodeID is the GraphQL global node ID of the linked issue, used for board sync.
 	IssueNodeID string
+	// ReviewFixIterations tracks how many review fix cycles have been attempted.
+	ReviewFixIterations int
+	// ReviewWaitStartedAt is when review monitoring started (for timeout tracking).
+	ReviewWaitStartedAt time.Time
 }
