@@ -887,7 +887,7 @@ func (r *Runner) executeWithOptions(ctx context.Context, task *Task, allowWorktr
 			}
 		} else {
 			worktreePath, cleanup, err = CreateWorktreeWithBranch(
-				ctx, task.ProjectPath, task.ID, task.Branch, "")
+				ctx, task.ProjectPath, task.ID, task.Branch, task.BaseBranch)
 		}
 
 		if err != nil {
@@ -1189,7 +1189,19 @@ func (r *Runner) executeWithOptions(ctx context.Context, task *Task, allowWorktr
 		// GH-279: Always switch to default branch and pull latest before creating new branch.
 		// This prevents new branches from forking off previous pilot branches instead of main.
 		// GH-836: Hard fail if we can't switch - continuing from wrong branch causes corrupted PRs.
-		defaultBranch, err := git.SwitchToDefaultBranchAndPull(ctx)
+		// Use task.BaseBranch if set (e.g., "develop" from project config).
+		var defaultBranch string
+		var err error
+		if task.BaseBranch != "" {
+			defaultBranch = task.BaseBranch
+			if switchErr := git.SwitchBranch(ctx, defaultBranch); switchErr != nil {
+				err = fmt.Errorf("failed to switch to %s: %w", defaultBranch, switchErr)
+			} else {
+				_ = git.Pull(ctx, defaultBranch)
+			}
+		} else {
+			defaultBranch, err = git.SwitchToDefaultBranchAndPull(ctx)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("branch switch failed, aborting execution: failed to switch to default branch: %w", err)
 		}
