@@ -1827,6 +1827,11 @@ func (c *Controller) checkExternalMergeOrClose(ctx context.Context, prState *PRS
 			}
 		}
 
+		// Invoke merged callback for adapter-specific post-merge actions (e.g., Jira transition to Done)
+		if c.onMergedCallback != nil {
+			c.onMergedCallback(ctx, prState)
+		}
+
 		// GH-411: Trigger release for externally merged PRs if auto-release is enabled
 		if c.shouldTriggerRelease() && prState.Stage != StageReleasing {
 			c.log.Info("triggering release for externally merged PR", "pr", prState.PRNumber)
