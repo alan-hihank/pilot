@@ -838,10 +838,19 @@ func TestController_CheckExternalMerge(t *testing.T) {
 }
 
 func TestController_CheckExternalClose(t *testing.T) {
-	// Test that externally closed (without merge) PRs are detected and removed
+	// Test that externally closed (without merge) PRs are detected and removed,
+	// pilot-done is removed, and pilot-failed is added
+	var (
+		removedDoneLabel     bool
+		addedFailedLabel     bool
+		addedRetryLabel      bool
+		removedInProgLabel   bool
+		reopenedIssue        bool
+	)
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/repos/owner/repo/pulls/42":
+		switch {
+		case r.URL.Path == "/repos/owner/repo/pulls/42" && r.Method == http.MethodGet:
 			// Return PR as closed but not merged
 			resp := github.PullRequest{
 				Number:  42,
@@ -851,6 +860,31 @@ func TestController_CheckExternalClose(t *testing.T) {
 			}
 			w.WriteHeader(http.StatusOK)
 			_ = json.NewEncoder(w).Encode(resp)
+		case r.URL.Path == "/repos/owner/repo/issues/10/labels/pilot-done" && r.Method == http.MethodDelete:
+			removedDoneLabel = true
+			w.WriteHeader(http.StatusOK)
+		case r.URL.Path == "/repos/owner/repo/issues/10/labels" && r.Method == http.MethodPost:
+			var body struct {
+				Labels []string `json:"labels"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			for _, l := range body.Labels {
+				switch l {
+				case "pilot-failed":
+					addedFailedLabel = true
+				case "pilot-retry-ready":
+					addedRetryLabel = true
+				}
+			}
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode([]map[string]string{})
+		case r.URL.Path == "/repos/owner/repo/issues/10/labels/pilot-in-progress" && r.Method == http.MethodDelete:
+			removedInProgLabel = true
+			w.WriteHeader(http.StatusOK)
+		case r.URL.Path == "/repos/owner/repo/issues/10" && r.Method == http.MethodPatch:
+			reopenedIssue = true
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(map[string]string{})
 		default:
 			w.WriteHeader(http.StatusOK)
 		}
@@ -876,6 +910,31 @@ func TestController_CheckExternalClose(t *testing.T) {
 	// Verify PR is removed
 	if _, ok := c.GetPRState(42); ok {
 		t.Error("PR should be removed after external close detection")
+	}
+
+	// Verify pilot-done label was removed
+	if !removedDoneLabel {
+		t.Error("expected pilot-done label to be removed when PR closed without merge")
+	}
+
+	// Verify pilot-failed label was added
+	if !addedFailedLabel {
+		t.Error("expected pilot-failed label to be added when PR closed without merge")
+	}
+
+	// Verify pilot-retry-ready label was added
+	if !addedRetryLabel {
+		t.Error("expected pilot-retry-ready label to be added when PR closed without merge")
+	}
+
+	// Verify pilot-in-progress label was removed
+	if !removedInProgLabel {
+		t.Error("expected pilot-in-progress label to be removed when PR closed without merge")
+	}
+
+	// Verify issue was reopened
+	if !reopenedIssue {
+		t.Error("expected issue to be reopened when PR closed without merge")
 	}
 }
 

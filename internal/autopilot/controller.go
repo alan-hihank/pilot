@@ -1876,15 +1876,26 @@ func (c *Controller) notifyExternalMerge(ctx context.Context, prState *PRState) 
 func (c *Controller) notifyExternalClose(ctx context.Context, prState *PRState) {
 	c.log.Info("PR closed externally without merge", "pr", prState.PRNumber, "issue", prState.IssueNumber)
 
-	// GH-1015: Add pilot-retry-ready label so the issue can be retried
-	// Remove pilot-in-progress to allow the poller to re-pick it
 	if prState.IssueNumber > 0 {
+		// Remove pilot-done — PR didn't merge, so the task didn't succeed
+		if err := c.ghClient.RemoveLabel(ctx, c.owner, c.repo, prState.IssueNumber, github.LabelDone); err != nil {
+			c.log.Debug("pilot-done label cleanup on close without merge", "issue", prState.IssueNumber, "error", err)
+		}
+		// Add pilot-failed so dashboard shows correct status
+		if err := c.ghClient.AddLabels(ctx, c.owner, c.repo, prState.IssueNumber, []string{github.LabelFailed}); err != nil {
+			c.log.Warn("failed to add pilot-failed label", "issue", prState.IssueNumber, "error", err)
+		}
+		// Add pilot-retry-ready so the poller can re-pick it
 		if err := c.ghClient.AddLabels(ctx, c.owner, c.repo, prState.IssueNumber, []string{github.LabelRetryReady}); err != nil {
 			c.log.Warn("failed to add pilot-retry-ready label", "issue", prState.IssueNumber, "error", err)
 		}
 		if err := c.ghClient.RemoveLabel(ctx, c.owner, c.repo, prState.IssueNumber, github.LabelInProgress); err != nil {
 			c.log.Warn("failed to remove pilot-in-progress label", "issue", prState.IssueNumber, "error", err)
 		}
-		c.log.Info("marked issue as pilot-retry-ready (PR closed without merge)", "issue", prState.IssueNumber, "pr", prState.PRNumber)
+		// Reopen the issue so it can be retried
+		if err := c.ghClient.UpdateIssueState(ctx, c.owner, c.repo, prState.IssueNumber, "open"); err != nil {
+			c.log.Warn("failed to reopen issue after PR closed without merge", "issue", prState.IssueNumber, "error", err)
+		}
+		c.log.Info("marked issue as pilot-failed (PR closed without merge)", "issue", prState.IssueNumber, "pr", prState.PRNumber)
 	}
 }
