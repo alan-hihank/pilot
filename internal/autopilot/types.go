@@ -463,4 +463,8 @@ type PRState struct {
 	ReviewFixIterations int
 	// ReviewWaitStartedAt is when review monitoring started (for timeout tracking).
 	ReviewWaitStartedAt time.Time
+	// SourceAdapter identifies which adapter created this PR (e.g. "github", "jira").
+	SourceAdapter string
+	// SourceIssueKey is the issue key from the source adapter (e.g. "PRODUCT-424" for Jira).
+	SourceIssueKey string
 }

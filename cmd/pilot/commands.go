@@ -116,6 +116,11 @@ func newStatusCmd() *cobra.Command {
 			} else {
 				fmt.Println("  ○ GitHub (disabled)")
 			}
+			if cfg.Adapters.Jira != nil && cfg.Adapters.Jira.Enabled {
+				fmt.Println("  ✓ Jira (enabled)")
+			} else {
+				fmt.Println("  ○ Jira (disabled)")
+			}
 			fmt.Println()
 
 			// List projects

@@ -1,6 +1,10 @@
 package jira
 
-import "time"
+import (
+	"encoding/json"
+	"strings"
+	"time"
+)
 
 // Config holds Jira adapter configuration
 type Config struct {
@@ -14,6 +18,7 @@ type Config struct {
 	ProjectKey    string `yaml:"project_key,omitempty"` // Optional project filter (e.g., "PROJ")
 	Transitions   struct {
 		InProgress string `yaml:"in_progress,omitempty"` // Jira transition ID
+		InReview   string `yaml:"in_review,omitempty"`   // Jira transition ID
 		Done       string `yaml:"done,omitempty"`        // Jira transition ID
 	} `yaml:"transitions,omitempty"`
 
@@ -107,17 +112,50 @@ type Issue struct {
 
 // Fields represents Jira issue fields
 type Fields struct {
-	Summary     string        `json:"summary"`
-	Description string        `json:"description"`
-	IssueType   IssueType     `json:"issuetype"`
-	Status      Status        `json:"status"`
-	Priority    *JiraPriority `json:"priority,omitempty"`
-	Labels      []string      `json:"labels"`
-	Assignee    *User         `json:"assignee,omitempty"`
-	Reporter    *User         `json:"reporter,omitempty"`
-	Project     Project       `json:"project"`
-	Created     string        `json:"created"`
-	Updated     string        `json:"updated"`
+	Summary        string          `json:"summary"`
+	RawDescription json.RawMessage `json:"description"` // string (API v2) or ADF object (API v3)
+	IssueType      IssueType       `json:"issuetype"`
+	Status         Status          `json:"status"`
+	Priority       *JiraPriority   `json:"priority,omitempty"`
+	Labels         []string        `json:"labels"`
+	Assignee       *User           `json:"assignee,omitempty"`
+	Reporter       *User           `json:"reporter,omitempty"`
+	Project        Project         `json:"project"`
+	Created        string          `json:"created"`
+	Updated        string          `json:"updated"`
+}
+
+// Description returns the description as plain text.
+// Handles both plain string (API v2/Server) and ADF (API v3/Cloud).
+func (f *Fields) Description() string {
+	if len(f.RawDescription) == 0 {
+		return ""
+	}
+	// Try plain string first (API v2)
+	var s string
+	if err := json.Unmarshal(f.RawDescription, &s); err == nil {
+		return s
+	}
+	// Parse ADF (API v3) - extract text content
+	var doc struct {
+		Content []struct {
+			Content []struct {
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"content"`
+	}
+	if err := json.Unmarshal(f.RawDescription, &doc); err == nil {
+		var parts []string
+		for _, block := range doc.Content {
+			for _, inline := range block.Content {
+				if inline.Text != "" {
+					parts = append(parts, inline.Text)
+				}
+			}
+		}
+		return strings.Join(parts, "\n")
+	}
+	return string(f.RawDescription)
 }
 
 // IssueType represents a Jira issue type

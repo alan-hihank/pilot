@@ -240,11 +240,13 @@ func (p *Poller) recoverOrphanedIssues(ctx context.Context) {
 
 func (p *Poller) checkForNewIssues(ctx context.Context) {
 	jql := p.buildJQL()
+	p.logger.Debug("Jira poll query", slog.String("jql", jql))
 	issues, err := p.client.SearchIssues(ctx, jql, 50)
 	if err != nil {
 		p.logger.Warn("Failed to fetch issues", slog.Any("error", err))
 		return
 	}
+	p.logger.Debug("Jira poll results", slog.Int("count", len(issues)))
 
 	// Sort by creation date (oldest first) - API should return sorted, but ensure it
 	sort.Slice(issues, func(i, j int) bool {

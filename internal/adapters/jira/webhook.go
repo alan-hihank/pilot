@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -180,12 +181,10 @@ func (h *WebhookHandler) extractIssue(payload map[string]interface{}) (*Issue, e
 		if summary, ok := fieldsData["summary"].(string); ok {
 			issue.Fields.Summary = summary
 		}
-		if desc, ok := fieldsData["description"].(string); ok {
-			issue.Fields.Description = desc
-		}
-		// Also check for ADF description (Jira Cloud)
-		if desc, ok := fieldsData["description"].(map[string]interface{}); ok {
-			issue.Fields.Description = h.extractADFText(desc)
+		if descRaw := fieldsData["description"]; descRaw != nil {
+			if rawBytes, err := json.Marshal(descRaw); err == nil {
+				issue.Fields.RawDescription = rawBytes
+			}
 		}
 
 		// Extract labels
