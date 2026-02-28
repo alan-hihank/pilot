@@ -284,6 +284,7 @@ type Runner struct {
 	alertProcessor        AlertEventProcessor                                             // Optional alert processor for event emission
 	webhooks              *webhooks.Manager                                               // Optional webhook manager for event delivery
 	qualityCheckerFactory QualityCheckerFactory                                           // Optional factory for creating quality checkers
+	skipAutoQualityGate   bool                                                            // Skip auto-detected build gate (when quality explicitly disabled)
 	modelRouter           *ModelRouter                                                    // Model and timeout routing based on complexity
 	parallelRunner        *ParallelRunner                                                 // Optional parallel research runner (GH-217)
 	decomposer            *TaskDecomposer                                                 // Optional task decomposer for complex tasks (GH-218)
@@ -532,6 +533,12 @@ func (r *Runner) SetWebhookManager(mgr *webhooks.Manager) {
 // that runs quality gates (build, test, lint) before PR creation.
 func (r *Runner) SetQualityCheckerFactory(factory QualityCheckerFactory) {
 	r.qualityCheckerFactory = factory
+}
+
+// SetSkipAutoQualityGate disables auto-detected build gates.
+// Use when quality gates are explicitly disabled in config.
+func (r *Runner) SetSkipAutoQualityGate(skip bool) {
+	r.skipAutoQualityGate = skip
 }
 
 // SetModelRouter sets the model router for complexity-based model and timeout selection.
@@ -1962,7 +1969,8 @@ The previous execution completed but made no code changes. This task requires ac
 
 		// Auto-enable minimal build gate if not configured (GH-363)
 		// This ensures broken code never becomes a PR, even without explicit quality config
-		if r.qualityCheckerFactory == nil {
+		// Skip if quality gates were explicitly disabled in config
+		if r.qualityCheckerFactory == nil && !r.skipAutoQualityGate {
 			buildCmd := quality.DetectBuildCommand(executionPath)
 			if buildCmd != "" {
 				log.Info("Auto-enabling build gate (no quality config)",

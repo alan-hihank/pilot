@@ -330,6 +330,9 @@ Examples:
 							}),
 						}
 					})
+				} else if cfg.Quality != nil && !cfg.Quality.Enabled {
+					// Explicitly disabled - skip auto-detected build gates too
+					gwRunner.SetSkipAutoQualityGate(true)
 				}
 
 				// Set up team project access checker if configured (GH-635)
@@ -881,6 +884,8 @@ Examples:
 					}
 				})
 				logging.WithComponent("start").Info("quality gates enabled for webhook mode")
+			} else if cfg.Quality != nil && !cfg.Quality.Enabled {
+				p.SetSkipAutoQualityGate(true)
 			}
 
 			// GH-1585: Wire autopilot provider to gateway so /api/v1/autopilot returns live PR data
@@ -1142,6 +1147,8 @@ func runPollingMode(cfg *config.Config, projectPath string, replace, dashboardMo
 			}
 		})
 		logging.WithComponent("start").Info("quality gates enabled for polling mode")
+	} else if cfg.Quality != nil && !cfg.Quality.Enabled {
+		runner.SetSkipAutoQualityGate(true)
 	}
 
 	// Set up team project access checker if configured (GH-635)

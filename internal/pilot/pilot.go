@@ -928,6 +928,11 @@ func (p *Pilot) SetQualityCheckerFactory(factory executor.QualityCheckerFactory)
 	p.orchestrator.SetQualityCheckerFactory(factory)
 }
 
+// SetSkipAutoQualityGate disables auto-detected build gates.
+func (p *Pilot) SetSkipAutoQualityGate(skip bool) {
+	p.orchestrator.SetSkipAutoQualityGate(skip)
+}
+
 // handleGithubIssue handles a new GitHub issue
 func (p *Pilot) handleGithubIssue(ctx context.Context, issue *github.Issue, repo *github.Repository) error {
 	logging.WithComponent("pilot").Info("Received GitHub issue",

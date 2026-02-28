@@ -325,6 +325,11 @@ func (o *Orchestrator) SetQualityCheckerFactory(factory executor.QualityCheckerF
 	o.runner.SetQualityCheckerFactory(factory)
 }
 
+// SetSkipAutoQualityGate disables auto-detected build gates on the runner.
+func (o *Orchestrator) SetSkipAutoQualityGate(skip bool) {
+	o.runner.SetSkipAutoQualityGate(skip)
+}
+
 // extractLabelNames extracts label names from Linear labels
 func extractLabelNames(labels []linear.Label) []string {
 	names := make([]string, len(labels))
