@@ -172,6 +172,18 @@ func (c *Client) GetIssue(ctx context.Context, owner, repo string, number int) (
 	return &issue, nil
 }
 
+// ListIssueComments returns all comments on an issue or pull request.
+func (c *Client) ListIssueComments(ctx context.Context, owner, repo string, number int) ([]*Comment, error) {
+	return WithRetry(ctx, func() ([]*Comment, error) {
+		path := fmt.Sprintf("/repos/%s/%s/issues/%d/comments?per_page=100", owner, repo, number)
+		var comments []*Comment
+		if err := c.doRequest(ctx, http.MethodGet, path, nil, &comments); err != nil {
+			return nil, err
+		}
+		return comments, nil
+	}, DefaultRetryOptions())
+}
+
 // AddComment adds a comment to an issue
 func (c *Client) AddComment(ctx context.Context, owner, repo string, number int, body string) (*Comment, error) {
 	return WithRetry(ctx, func() (*Comment, error) {
