@@ -66,7 +66,18 @@ func jiraPollerRegistration() PollerRegistration {
 
 				// Wire PR to autopilot with Jira source info for post-merge transition
 				if result != nil && result.PRNumber > 0 && deps.AutopilotController != nil {
+					logging.WithComponent("jira").Info("Wiring PR to autopilot",
+						slog.String("issue", issue.Key),
+						slog.Int("pr", result.PRNumber),
+						slog.String("branch", result.BranchName),
+						slog.String("sha", result.HeadSHA),
+					)
 					deps.AutopilotController.OnPRCreatedWithSource(result.PRNumber, result.PRURL, 0, result.HeadSHA, result.BranchName, "", "jira", issue.Key)
+				} else if result != nil && deps.AutopilotController == nil {
+					logging.WithComponent("jira").Warn("Autopilot controller not available, PR not tracked",
+						slog.String("issue", issue.Key),
+						slog.Int("pr", result.PRNumber),
+					)
 				}
 
 				return result, err
