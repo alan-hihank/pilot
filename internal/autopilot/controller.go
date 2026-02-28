@@ -107,6 +107,11 @@ type Controller struct {
 	// A failure on one PR does not block other PRs.
 	prFailures map[int]*prFailureState
 
+	// Review fix loop components (optional, nil = review fix disabled)
+	reviewMonitor *ReviewMonitor
+	reviewFixer   *ReviewFixer
+	projectPath   string // needed for review fix executor
+
 	// Deadlock detection (GH-849): track last time any PR made progress.
 	// If no state transitions occur for 1h, fire a deadlock alert.
 	lastProgressAt    time.Time
@@ -149,6 +154,16 @@ func NewController(cfg *Config, ghClient *github.Client, approvalMgr *approval.M
 		c.deployer = NewDeployer(ghClient, owner, repo, env.PostMerge)
 	}
 
+	// Initialize review monitor if review fix is enabled
+	if cfg.ReviewFixEnabled {
+		c.reviewMonitor = NewReviewMonitor(
+			ghClient, owner, repo,
+			cfg.ReviewBotLogin,
+			cfg.ReviewPollInterval,
+			cfg.ReviewWaitTimeout,
+		)
+	}
+
 	for _, opt := range opts {
 		opt(c)
 	}
@@ -173,6 +188,13 @@ func (c *Controller) SetMonitor(m TaskMonitor) {
 // If set, all state transitions are persisted to SQLite.
 func (c *Controller) SetStateStore(store *StateStore) {
 	c.stateStore = store
+}
+
+// SetReviewFixer sets the review fixer for automated review fix loop.
+// Must also set projectPath for Claude Code execution context.
+func (c *Controller) SetReviewFixer(fixer *ReviewFixer, projectPath string) {
+	c.reviewFixer = fixer
+	c.projectPath = projectPath
 }
 
 // SetLearningLoop sets the learning loop for capturing PR review feedback.
@@ -352,6 +374,10 @@ func (c *Controller) ProcessPR(ctx context.Context, prNumber int, ghPR *github.P
 		err = c.handlePostMergeCI(ctx, prState)
 	case StageReleasing:
 		err = c.handleReleasing(ctx, prState)
+	case StageAwaitingReview:
+		err = c.handleAwaitingReview(ctx, prState)
+	case StageFixingReview:
+		err = c.handleFixingReview(ctx, prState)
 	case StageFailed:
 		// Terminal state - no processing
 		return nil
@@ -556,12 +582,22 @@ func (c *Controller) handleWaitingCI(ctx context.Context, prState *PRState, ghPR
 }
 
 // handleCIPassed proceeds to merge (with approval if required by environment config).
+// When review fix is enabled, routes to StageAwaitingReview first.
 func (c *Controller) handleCIPassed(ctx context.Context, prState *PRState) error {
 	c.log.Info("handleCIPassed: CI passed, determining next stage",
 		"pr", prState.PRNumber,
 		"env", c.config.EnvironmentName(),
 		"auto_merge", c.config.AutoMerge,
+		"review_fix_enabled", c.config.ReviewFixEnabled,
 	)
+
+	// Route to review monitoring if enabled and monitor is initialized
+	if c.config.ReviewFixEnabled && c.reviewMonitor != nil {
+		c.log.Info("routing to review monitoring", "pr", prState.PRNumber)
+		prState.Stage = StageAwaitingReview
+		prState.ReviewWaitStartedAt = time.Now()
+		return nil
+	}
 
 	if c.config.ResolvedEnv().RequireApproval {
 		c.log.Info("awaiting approval before merge", "pr", prState.PRNumber)
@@ -679,6 +715,115 @@ func (c *Controller) handleCIFailed(ctx context.Context, prState *PRState) error
 
 	prState.Stage = StageFailed
 	c.metrics.RecordPRFailed()
+	return nil
+}
+
+// handleAwaitingReview polls for bot review status on the PR.
+// Routes to fixing if changes are requested, or to merge/approval if approved.
+func (c *Controller) handleAwaitingReview(ctx context.Context, prState *PRState) error {
+	if c.reviewMonitor == nil {
+		// Review monitoring not configured, skip to next stage
+		c.log.Warn("review monitor not initialized, skipping review stage", "pr", prState.PRNumber)
+		prState.Stage = StageMerging
+		return nil
+	}
+
+	// Check for review timeout
+	if !prState.ReviewWaitStartedAt.IsZero() && c.config.ReviewWaitTimeout > 0 {
+		if time.Since(prState.ReviewWaitStartedAt) > c.config.ReviewWaitTimeout {
+			c.log.Info("review wait timeout reached, proceeding without review",
+				"pr", prState.PRNumber,
+				"timeout", c.config.ReviewWaitTimeout,
+			)
+			// Proceed to merge/approval as if review was approved
+			if c.config.ResolvedEnv().RequireApproval {
+				prState.Stage = StageAwaitApproval
+			} else {
+				prState.Stage = StageMerging
+			}
+			return nil
+		}
+	}
+
+	feedback, err := c.reviewMonitor.CheckReview(ctx, prState.PRNumber)
+	if err != nil {
+		c.log.Warn("failed to check review status", "pr", prState.PRNumber, "error", err)
+		// Non-fatal: will retry on next tick
+		return nil
+	}
+
+	switch feedback.Status {
+	case ReviewApproved:
+		c.log.Info("bot review approved", "pr", prState.PRNumber)
+		if c.config.ResolvedEnv().RequireApproval {
+			prState.Stage = StageAwaitApproval
+		} else {
+			prState.Stage = StageMerging
+		}
+
+	case ReviewChangesRequested:
+		c.log.Info("bot review requested changes", "pr", prState.PRNumber, "comments", len(feedback.Comments))
+
+		// Check iteration limit
+		if c.config.MaxReviewFixIterations > 0 && prState.ReviewFixIterations >= c.config.MaxReviewFixIterations {
+			c.log.Warn("review fix iteration limit reached",
+				"pr", prState.PRNumber,
+				"iterations", prState.ReviewFixIterations,
+				"max", c.config.MaxReviewFixIterations,
+			)
+			// Proceed to merge anyway (human can review remaining issues)
+			if c.config.ResolvedEnv().RequireApproval {
+				prState.Stage = StageAwaitApproval
+			} else {
+				prState.Stage = StageMerging
+			}
+			return nil
+		}
+
+		prState.ReviewFixIterations++
+		prState.Stage = StageFixingReview
+
+	case ReviewPending, ReviewCommented:
+		// No actionable review yet, stay in this stage
+		c.log.Debug("no actionable bot review yet", "pr", prState.PRNumber, "status", feedback.Status)
+	}
+
+	return nil
+}
+
+// handleFixingReview invokes Claude Code to fix bot review comments and pushes fixes.
+func (c *Controller) handleFixingReview(ctx context.Context, prState *PRState) error {
+	if c.reviewFixer == nil || c.reviewMonitor == nil {
+		c.log.Warn("review fixer not initialized, skipping fix stage", "pr", prState.PRNumber)
+		prState.Stage = StageMerging
+		return nil
+	}
+
+	// Fetch the latest review feedback
+	feedback, err := c.reviewMonitor.CheckReview(ctx, prState.PRNumber)
+	if err != nil {
+		return fmt.Errorf("failed to fetch review feedback: %w", err)
+	}
+
+	// Run the fix
+	if err := c.reviewFixer.FixReviewComments(ctx, prState, feedback, c.projectPath, c.reviewMonitor); err != nil {
+		c.log.Error("review fix failed", "pr", prState.PRNumber, "error", err)
+		// Don't fail the pipeline, just move on
+		if c.config.ResolvedEnv().RequireApproval {
+			prState.Stage = StageAwaitApproval
+		} else {
+			prState.Stage = StageMerging
+		}
+		return nil
+	}
+
+	// After fixing, go back to CI to verify fixes don't break the build
+	c.log.Info("review fixes pushed, returning to CI wait",
+		"pr", prState.PRNumber,
+		"iteration", prState.ReviewFixIterations,
+	)
+	prState.Stage = StageWaitingCI
+	prState.CIWaitStartedAt = time.Now()
 	return nil
 }
 
