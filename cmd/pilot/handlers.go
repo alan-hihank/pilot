@@ -447,12 +447,19 @@ func handleJiraIssueWithResult(ctx context.Context, cfg *config.Config, client *
 	taskDesc := fmt.Sprintf("Jira Issue %s: %s\n\n%s", issue.Key, issue.Fields.Summary, issue.Fields.Description())
 	branchName := fmt.Sprintf("pilot/%s", taskID)
 
+	// Resolve base branch from project config (e.g., "develop")
+	baseBranch := ""
+	if proj := cfg.GetProject(projectPath); proj != nil && proj.DefaultBranch != "" {
+		baseBranch = proj.DefaultBranch
+	}
+
 	task := &executor.Task{
 		ID:          taskID,
 		Title:       issue.Fields.Summary,
 		Description: taskDesc,
 		ProjectPath: projectPath,
 		Branch:      branchName,
+		BaseBranch:  baseBranch,
 		CreatePR:    true,
 	}
 
