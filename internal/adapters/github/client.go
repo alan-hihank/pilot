@@ -783,6 +783,73 @@ func (c *Client) ExecuteGraphQL(ctx context.Context, query string, variables map
 	return nil
 }
 
+// ReviewThread represents a PR review thread from GraphQL.
+type ReviewThread struct {
+	ID         string `json:"id"`
+	IsResolved bool   `json:"isResolved"`
+}
+
+// GetUnresolvedReviewThreads returns all unresolved review threads for a PR.
+func (c *Client) GetUnresolvedReviewThreads(ctx context.Context, owner, repo string, prNumber int) ([]ReviewThread, error) {
+	query := `query($owner: String!, $repo: String!, $pr: Int!) {
+		repository(owner: $owner, name: $repo) {
+			pullRequest(number: $pr) {
+				reviewThreads(first: 100) {
+					nodes {
+						id
+						isResolved
+					}
+				}
+			}
+		}
+	}`
+
+	vars := map[string]interface{}{
+		"owner": owner,
+		"repo":  repo,
+		"pr":    prNumber,
+	}
+
+	var result struct {
+		Repository struct {
+			PullRequest struct {
+				ReviewThreads struct {
+					Nodes []ReviewThread `json:"nodes"`
+				} `json:"reviewThreads"`
+			} `json:"pullRequest"`
+		} `json:"repository"`
+	}
+
+	if err := c.ExecuteGraphQL(ctx, query, vars, &result); err != nil {
+		return nil, err
+	}
+
+	var unresolved []ReviewThread
+	for _, t := range result.Repository.PullRequest.ReviewThreads.Nodes {
+		if !t.IsResolved {
+			unresolved = append(unresolved, t)
+		}
+	}
+	return unresolved, nil
+}
+
+// ResolveReviewThread resolves a PR review thread by its GraphQL node ID.
+func (c *Client) ResolveReviewThread(ctx context.Context, threadID string) error {
+	mutation := `mutation($threadId: ID!) {
+		resolveReviewThread(input: {threadId: $threadId}) {
+			thread {
+				isResolved
+			}
+		}
+	}`
+
+	vars := map[string]interface{}{
+		"threadId": threadID,
+	}
+
+	return c.ExecuteGraphQL(ctx, mutation, vars, nil)
+}
+
 // UpdatePullRequestBranch updates the PR branch with the latest base branch.
 // Uses GitHub API: PUT /repos/{owner}/{repo}/pulls/{number}/update-branch
 // Returns nil on success, error if the branch cannot be automatically updated (true conflict).

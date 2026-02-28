@@ -59,6 +59,9 @@ func (f *ReviewFixer) FixReviewComments(ctx context.Context, prState *PRState, f
 		prState.HeadSHA = newSHA
 	}
 
+	// Resolve review threads that were addressed
+	f.resolveReviewThreads(ctx, prState.PRNumber)
+
 	// Post summary comment on PR
 	commentBody := f.buildSummaryComment(feedback, prState.ReviewFixIterations)
 	if _, err := f.ghClient.AddPRComment(ctx, f.owner, f.repo, prState.PRNumber, commentBody); err != nil {
@@ -67,6 +70,28 @@ func (f *ReviewFixer) FixReviewComments(ctx context.Context, prState *PRState, f
 	}
 
 	return nil
+}
+
+// resolveReviewThreads marks all unresolved review threads as resolved.
+func (f *ReviewFixer) resolveReviewThreads(ctx context.Context, prNumber int) {
+	threads, err := f.ghClient.GetUnresolvedReviewThreads(ctx, f.owner, f.repo, prNumber)
+	if err != nil {
+		f.log.Warn("failed to get review threads", "pr", prNumber, "error", err)
+		return
+	}
+
+	resolved := 0
+	for _, t := range threads {
+		if err := f.ghClient.ResolveReviewThread(ctx, t.ID); err != nil {
+			f.log.Warn("failed to resolve review thread", "pr", prNumber, "thread", t.ID, "error", err)
+			continue
+		}
+		resolved++
+	}
+
+	if resolved > 0 {
+		f.log.Info("resolved review threads", "pr", prNumber, "count", resolved)
+	}
 }
 
 // buildSummaryComment creates a markdown comment summarizing what was fixed.
