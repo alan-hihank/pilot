@@ -1730,7 +1730,8 @@ func (c *Controller) Run(ctx context.Context) error {
 			newInterval := idlePollInterval
 			activePRs := c.GetActivePRs()
 			for _, pr := range activePRs {
-				if pr.Stage == StageWaitingCI || pr.Stage == StagePRCreated {
+				if pr.Stage == StageWaitingCI || pr.Stage == StagePRCreated ||
+					pr.Stage == StageAwaitingReview || pr.Stage == StageFixingReview {
 					newInterval = fastPollInterval
 					break
 				}
