@@ -1521,9 +1521,9 @@ func (m Model) renderTasks() string {
 
 // renderTask renders a single task row with state-aware icons, bars, and meta.
 //
-// Layout (65 inner chars):
+// Layout (67 inner chars):
 //
-//	sel(2) + icon+state(8) + space(1) + id(7) + space(1) + title(20) + gap(2) + bar(16) + gap(1) + meta(5)
+//	sel(2) + icon+state(8) + space(1) + id(12) + space(1) + title(18) + gap(2) + bar(16) + gap(1) + meta(5)
 func (m Model) renderTask(task TaskDisplay, selected bool, queueOffset int) string {
 	var icon, stateLabel, meta string
 	var iconStyle, barStyle lipgloss.Style
@@ -1596,11 +1596,14 @@ func (m Model) renderTask(task TaskDisplay, selected bool, queueOffset int) stri
 
 	// Left side: selector + icon+state + id + title
 	// Right side: bar + meta (right-aligned)
-	return fmt.Sprintf("%s%s %-7s %-20s  %s %s",
+	// Use truncated ID (max 12 chars) to handle longer Jira keys like PRODUCT-424
+	taskID := truncateVisual(task.ID, 12)
+	titleWidth := 18
+	return fmt.Sprintf("%s%s %-12s %-*s  %s %s",
 		selector,
 		iconState,
-		task.ID,
-		truncateVisual(task.Title, 20),
+		taskID,
+		titleWidth, truncateVisual(task.Title, titleWidth),
 		progressBar,
 		renderedMeta,
 	)
