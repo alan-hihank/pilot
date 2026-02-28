@@ -6,6 +6,7 @@ import (
 
 	"github.com/alekspetrov/pilot/internal/adapters"
 	"github.com/alekspetrov/pilot/internal/adapters/jira"
+	"github.com/alekspetrov/pilot/internal/autopilot"
 	"github.com/alekspetrov/pilot/internal/config"
 	"github.com/alekspetrov/pilot/internal/logging"
 )
@@ -29,12 +30,43 @@ func jiraPollerRegistration() PollerRegistration {
 				pollerDeps.ProcessedStore = deps.AutopilotStateStore
 			}
 
+			// Wire Jira post-merge callback: transition ticket to Done when PR is merged
+			if deps.AutopilotController != nil {
+				jiraClient := jiraAdapter.Client()
+				jiraCfg := deps.Cfg.Adapters.Jira
+				deps.AutopilotController.SetOnMergedCallback(func(cbCtx context.Context, prState *autopilot.PRState) {
+					if prState.SourceAdapter != "jira" || prState.SourceIssueKey == "" {
+						return
+					}
+					log := logging.WithComponent("jira")
+					log.Info("Transitioning Jira issue to Done after merge",
+						slog.String("issue", prState.SourceIssueKey),
+						slog.Int("pr", prState.PRNumber),
+					)
+					if jiraCfg.Transitions.Done != "" {
+						if err := jiraClient.TransitionIssue(cbCtx, prState.SourceIssueKey, jiraCfg.Transitions.Done); err != nil {
+							log.Warn("failed to transition Jira issue to Done (explicit ID)",
+								slog.String("issue", prState.SourceIssueKey),
+								slog.Any("error", err),
+							)
+						}
+					} else {
+						if err := jiraClient.TransitionIssueTo(cbCtx, prState.SourceIssueKey, "Done"); err != nil {
+							log.Warn("failed to transition Jira issue to Done (name lookup)",
+								slog.String("issue", prState.SourceIssueKey),
+								slog.Any("error", err),
+							)
+						}
+					}
+				})
+			}
+
 			jiraPoller := jiraAdapter.CreatePoller(pollerDeps, func(issueCtx context.Context, issue *jira.Issue) (*jira.IssueResult, error) {
 				result, err := handleJiraIssueWithResult(issueCtx, deps.Cfg, jiraAdapter.Client(), issue, deps.ProjectPath, deps.Dispatcher, deps.Runner, deps.Monitor, deps.Program, deps.AlertsEngine, deps.Enforcer)
 
-				// GH-1399: Wire PR to autopilot for CI monitoring + auto-merge
+				// Wire PR to autopilot with Jira source info for post-merge transition
 				if result != nil && result.PRNumber > 0 && deps.AutopilotController != nil {
-					deps.AutopilotController.OnPRCreated(result.PRNumber, result.PRURL, 0, result.HeadSHA, result.BranchName, "")
+					deps.AutopilotController.OnPRCreatedWithSource(result.PRNumber, result.PRURL, 0, result.HeadSHA, result.BranchName, "", "jira", issue.Key)
 				}
 
 				return result, err

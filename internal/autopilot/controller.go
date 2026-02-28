@@ -112,6 +112,10 @@ type Controller struct {
 	reviewFixer   *ReviewFixer
 	projectPath   string // needed for review fix executor
 
+	// onMergedCallback is called when a PR is merged, allowing adapters to run post-merge actions
+	// (e.g., Jira ticket transition to Done). Set via SetOnMergedCallback.
+	onMergedCallback func(ctx context.Context, prState *PRState)
+
 	// Deadlock detection (GH-849): track last time any PR made progress.
 	// If no state transitions occur for 1h, fire a deadlock alert.
 	lastProgressAt    time.Time
@@ -290,8 +294,19 @@ func (c *Controller) RestoreState() (int, error) {
 	return restored, nil
 }
 
+// SetOnMergedCallback sets a callback that runs when a PR is merged.
+// Used by adapters (e.g., Jira) to perform post-merge actions like transitioning tickets.
+func (c *Controller) SetOnMergedCallback(fn func(ctx context.Context, prState *PRState)) {
+	c.onMergedCallback = fn
+}
+
 // OnPRCreated registers a new PR for autopilot processing.
 func (c *Controller) OnPRCreated(prNumber int, prURL string, issueNumber int, headSHA string, branchName string, issueNodeID string) {
+	c.OnPRCreatedWithSource(prNumber, prURL, issueNumber, headSHA, branchName, issueNodeID, "", "")
+}
+
+// OnPRCreatedWithSource registers a new PR with source adapter info (e.g., Jira issue key).
+func (c *Controller) OnPRCreatedWithSource(prNumber int, prURL string, issueNumber int, headSHA string, branchName string, issueNodeID string, sourceAdapter string, sourceIssueKey string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -306,6 +321,8 @@ func (c *Controller) OnPRCreated(prNumber int, prURL string, issueNumber int, he
 		CreatedAt:       time.Now(),
 		EnvironmentName: c.config.EnvironmentName(),
 		IssueNodeID:     issueNodeID,
+		SourceAdapter:   sourceAdapter,
+		SourceIssueKey:  sourceIssueKey,
 	}
 	c.activePRs[prNumber] = prState
 
@@ -320,6 +337,8 @@ func (c *Controller) OnPRCreated(prNumber int, prURL string, issueNumber int, he
 		"sha", ShortSHA(headSHA),
 		"stage", StagePRCreated,
 		"env", c.config.EnvironmentName(),
+		"source_adapter", sourceAdapter,
+		"source_issue_key", sourceIssueKey,
 	)
 }
 
@@ -935,6 +954,11 @@ func (c *Controller) handleMerging(ctx context.Context, prState *PRState) error 
 		if err := c.notifier.NotifyMerged(ctx, prState); err != nil {
 			c.log.Warn("failed to send merge notification", "error", err)
 		}
+	}
+
+	// Run adapter-specific post-merge actions (e.g., Jira ticket transition to Done)
+	if c.onMergedCallback != nil {
+		c.onMergedCallback(ctx, prState)
 	}
 
 	return nil

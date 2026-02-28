@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -210,11 +211,14 @@ func (c *Client) GetProject(ctx context.Context, projectKey string) (*Project, e
 }
 
 // SearchResponse represents the response from the search API
+// Supports both legacy /search (total/startAt/maxResults) and new /search/jql (nextPageToken/isLast)
 type SearchResponse struct {
-	Issues     []*Issue `json:"issues"`
-	Total      int      `json:"total"`
-	StartAt    int      `json:"startAt"`
-	MaxResults int      `json:"maxResults"`
+	Issues        []*Issue `json:"issues"`
+	Total         int      `json:"total"`
+	StartAt       int      `json:"startAt"`
+	MaxResults    int      `json:"maxResults"`
+	NextPageToken string   `json:"nextPageToken,omitempty"`
+	IsLast        bool     `json:"isLast,omitempty"`
 }
 
 // SearchIssues searches for issues using JQL
@@ -223,7 +227,15 @@ func (c *Client) SearchIssues(ctx context.Context, jql string, maxResults int) (
 		maxResults = 50
 	}
 
-	path := fmt.Sprintf("/search?jql=%s&maxResults=%d", strings.ReplaceAll(jql, " ", "+"), maxResults)
+	// Atlassian deprecated /search in favor of /search/jql (CHANGE-2046)
+	// The new endpoint requires fields=*all to return issue key and fields (otherwise only id is returned)
+	endpoint := "/search/jql"
+	fieldsParam := "&fields=*all"
+	if c.platform == PlatformServer {
+		endpoint = "/search"
+		fieldsParam = "" // legacy endpoint returns all fields by default
+	}
+	path := fmt.Sprintf("%s?jql=%s&maxResults=%d%s", endpoint, url.QueryEscape(jql), maxResults, fieldsParam)
 	var resp SearchResponse
 	if err := c.doRequest(ctx, http.MethodGet, path, nil, &resp); err != nil {
 		return nil, err

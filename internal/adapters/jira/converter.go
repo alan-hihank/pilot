@@ -28,7 +28,7 @@ func ConvertIssueToTask(issue *Issue, baseURL string) *TaskInfo {
 	task := &TaskInfo{
 		ID:          fmt.Sprintf("JIRA-%s", issue.Key),
 		Title:       issue.Fields.Summary,
-		Description: extractDescription(issue.Fields.Description),
+		Description: extractDescription(issue.Fields.Description()),
 		Priority:    priority,
 		Labels:      filterLabels(issue.Fields.Labels),
 		ProjectKey:  issue.Fields.Project.Key,

@@ -400,6 +400,9 @@ func interactiveStatus(cfg *config.Config) error {
 	if cfg.Adapters.GitHub != nil && cfg.Adapters.GitHub.Enabled {
 		fmt.Println("    + GitHub")
 	}
+	if cfg.Adapters.Jira != nil && cfg.Adapters.Jira.Enabled {
+		fmt.Println("    + Jira")
+	}
 	fmt.Println()
 
 	// Projects

@@ -444,7 +444,7 @@ func handleLinearIssueWithResult(ctx context.Context, cfg *config.Config, client
 func handleJiraIssueWithResult(ctx context.Context, cfg *config.Config, client *jira.Client, issue *jira.Issue, projectPath string, dispatcher *executor.Dispatcher, runner *executor.Runner, monitor *executor.Monitor, program *tea.Program, alertsEngine *alerts.Engine, enforcer *budget.Enforcer) (*jira.IssueResult, error) {
 	taskID := issue.Key // e.g., "PROJ-123"
 
-	taskDesc := fmt.Sprintf("Jira Issue %s: %s\n\n%s", issue.Key, issue.Fields.Summary, issue.Fields.Description)
+	taskDesc := fmt.Sprintf("Jira Issue %s: %s\n\n%s", issue.Key, issue.Fields.Summary, issue.Fields.Description())
 	branchName := fmt.Sprintf("pilot/%s", taskID)
 
 	task := &executor.Task{
@@ -516,19 +516,18 @@ func handleJiraIssueWithResult(ctx context.Context, cfg *config.Config, client *
 				)
 			}
 
-			// GH-1403: Best-effort state transition to Done
-			// Check config for explicit transition ID, fall back to name-based lookup
-			if cfg.Adapters.Jira.Transitions.Done != "" {
-				if err := client.TransitionIssue(ctx, issue.Key, cfg.Adapters.Jira.Transitions.Done); err != nil {
-					logging.WithComponent("jira").Warn("failed to transition issue to done state (explicit ID)",
+			// Transition to "In Review" when PR is created (Done will happen on merge via autopilot)
+			if cfg.Adapters.Jira.Transitions.InReview != "" {
+				if err := client.TransitionIssue(ctx, issue.Key, cfg.Adapters.Jira.Transitions.InReview); err != nil {
+					logging.WithComponent("jira").Warn("failed to transition issue to in-review state (explicit ID)",
 						slog.String("issue", issue.Key),
-						slog.String("transition_id", cfg.Adapters.Jira.Transitions.Done),
+						slog.String("transition_id", cfg.Adapters.Jira.Transitions.InReview),
 						slog.Any("error", err),
 					)
 				}
 			} else {
-				if err := client.TransitionIssueTo(ctx, issue.Key, "Done"); err != nil {
-					logging.WithComponent("jira").Warn("failed to transition issue to done state (name lookup)",
+				if err := client.TransitionIssueTo(ctx, issue.Key, "In Review"); err != nil {
+					logging.WithComponent("jira").Warn("failed to transition issue to in-review state (name lookup)",
 						slog.String("issue", issue.Key),
 						slog.Any("error", err),
 					)
