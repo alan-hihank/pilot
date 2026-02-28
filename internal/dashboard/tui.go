@@ -182,7 +182,13 @@ func (p *AutopilotPanel) View() string {
 			label := p.stageLabel(pr.Stage)
 			// Show PR number and stage with time in stage
 			timeInStage := p.formatDuration(time.Since(pr.CreatedAt))
-			prLine := fmt.Sprintf("  %s #%d: %s (%s)", icon, pr.PRNumber, label, timeInStage)
+
+			// Include source issue key (e.g., Jira ticket) when available
+			sourceInfo := ""
+			if pr.SourceIssueKey != "" {
+				sourceInfo = fmt.Sprintf(" [%s]", pr.SourceIssueKey)
+			}
+			prLine := fmt.Sprintf("  %s #%d%s: %s (%s)", icon, pr.PRNumber, sourceInfo, label, timeInStage)
 			content.WriteString(prLine)
 			content.WriteString("\n")
 
@@ -191,6 +197,15 @@ func (p *AutopilotPanel) View() string {
 				ciLine := fmt.Sprintf("     CI: %s", pr.CIStatus)
 				content.WriteString(ciLine)
 				content.WriteString("\n")
+			}
+
+			// Show review fix iteration count
+			if pr.Stage == autopilot.StageAwaitingReview || pr.Stage == autopilot.StageFixingReview {
+				if pr.ReviewFixIterations > 0 {
+					reviewLine := fmt.Sprintf("     Review fixes: %d", pr.ReviewFixIterations)
+					content.WriteString(reviewLine)
+					content.WriteString("\n")
+				}
 			}
 
 			// Show error if in failed state
@@ -250,6 +265,10 @@ func (p *AutopilotPanel) stageIcon(stage autopilot.PRStage) string {
 		return "x"
 	case autopilot.StageAwaitApproval:
 		return "?"
+	case autopilot.StageAwaitingReview:
+		return "R"
+	case autopilot.StageFixingReview:
+		return "F"
 	case autopilot.StageMerging:
 		return ">"
 	case autopilot.StageMerged:
@@ -278,6 +297,10 @@ func (p *AutopilotPanel) stageLabel(stage autopilot.PRStage) string {
 		return "CI Failed"
 	case autopilot.StageAwaitApproval:
 		return "Awaiting Approval"
+	case autopilot.StageAwaitingReview:
+		return "In Review"
+	case autopilot.StageFixingReview:
+		return "Fixing Review"
 	case autopilot.StageMerging:
 		return "Merging"
 	case autopilot.StageMerged:
